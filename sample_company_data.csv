@@ -1,0 +1,2 @@
+revenue,customers,sentiment,delivery_delay,costs,churn_rate,marketing_spend,risk_score,profit
+100000,1000,75,2,50000,5,15000,30,50000

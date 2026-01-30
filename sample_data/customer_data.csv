@@ -1,0 +1,6 @@
+customers,new_customers,churned_customers,lifetime_value,churn_rate
+1000,150,50,500,5
+1100,180,55,520,5.0
+1225,200,60,540,4.9
+1365,220,65,555,4.8
+1520,250,80,570,5.3
