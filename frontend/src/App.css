@@ -287,6 +287,42 @@ body {
   font-size: 0.75rem;
 }
 
+/* Uploaded Files Display */
+.uploaded-files {
+  margin: 0.5rem 0;
+  padding: 0.5rem;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--success);
+}
+
+.uploaded-file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--success);
+  padding: 0.25rem 0;
+}
+
+.file-icon {
+  font-size: 0.875rem;
+}
+
+.file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+
+/* Updated upload button for has-data state */
+.category-card.has-data .btn-upload {
+  border-color: var(--success);
+  color: var(--success);
+  background: rgba(16, 185, 129, 0.1);
+}
+
 .status-dot {
   position: absolute;
   top: 0.75rem;

@@ -86,6 +86,7 @@ def root():
             "churn_prediction": ML_ENABLED,
             "drift_monitoring": ML_ENABLED,
             "multi_agent": True
+        }
     }
 
 
@@ -507,3 +508,4 @@ def get_agents():
         ],
         "total_agents": 6
     }
+    

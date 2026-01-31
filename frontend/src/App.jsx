@@ -315,6 +315,11 @@ function App() {
     return sources[category]?.files?.length > 0;
   };
 
+  const getCategoryFiles = (category) => {
+    const sources = dataSources.sources?.by_category || {};
+    return sources[category]?.files || [];
+  };
+
   // Tab content rendering
   const renderDashboardTab = () => (
     <>
@@ -657,6 +662,19 @@ function App() {
               <div className="category-icon">{CATEGORY_ICONS[key] || "📊"}</div>
               <div className="category-name">{cat.name}</div>
               <div className="category-desc">{cat.description}</div>
+
+              {/* Show uploaded files */}
+              {getCategoryStatus(key) && (
+                <div className="uploaded-files">
+                  {getCategoryFiles(key).map((file, idx) => (
+                    <div key={idx} className="uploaded-file">
+                      <span className="file-icon">📄</span>
+                      <span className="file-name">{file.filename}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="category-actions">
                 <input
                   type="file"
@@ -670,7 +688,7 @@ function App() {
                   onClick={() => fileInputRefs.current[key]?.click()}
                   disabled={uploadingCategory === key}
                 >
-                  {uploadingCategory === key ? "Uploading..." : getCategoryStatus(key) ? "Replace" : "Upload"}
+                  {uploadingCategory === key ? "Uploading..." : getCategoryStatus(key) ? "✓ Replace" : "Upload"}
                 </button>
                 {getCategoryStatus(key) && (
                   <button className="btn-clear" onClick={() => clearCategory(key)}>✕</button>
