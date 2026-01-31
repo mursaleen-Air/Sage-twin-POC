@@ -20,7 +20,8 @@ from state_engine import business_state, BusinessState
 from causal_graph import propagate_change, get_causal_graph_visualization, CAUSAL_MAP
 from multi_agents import multi_agent_engine
 from forecast import generate_forecast
-from data_sources import data_source_manager, DATA_CATEGORIES
+from data_sources import data_source_manager, DATA_CATEGORIES, DataSourceManager
+from session_manager import session_manager, UserSession
 
 # Import ML API router (Phase 1-4 capabilities)
 try:
@@ -85,8 +86,47 @@ def root():
             "churn_prediction": ML_ENABLED,
             "drift_monitoring": ML_ENABLED,
             "multi_agent": True
-        }
     }
+
+
+# ============================================
+# SESSION MANAGEMENT (Multi-User Support)
+# ============================================
+
+@app.post("/session/create")
+def create_session():
+    """Create a new user session"""
+    session_id = session_manager.create_session()
+    return {
+        "session_id": session_id,
+        "message": "Session created. Include this ID in your requests."
+    }
+
+
+@app.get("/session/{session_id}")
+def get_session_info(session_id: str):
+    """Get session information"""
+    info = session_manager.get_session_info(session_id)
+    if not info:
+        return {"error": "Session not found or expired"}
+    return info
+
+
+@app.delete("/session/{session_id}")
+def delete_session(session_id: str):
+    """Delete a session"""
+    success = session_manager.delete_session(session_id)
+    return {"success": success}
+
+
+def get_user_state(session_id: Optional[str] = None):
+    """Helper to get state for a session or fallback to global"""
+    if session_id:
+        session = session_manager.get_session(session_id)
+        if session:
+            return session.business_state, session.data_source_manager
+    # Fallback to global (backwards compatible)
+    return business_state, data_source_manager
 
 
 # ============================================
@@ -109,7 +149,8 @@ def get_data_categories():
 @app.post("/upload/{category}")
 async def upload_file(
     category: str,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    session_id: Optional[str] = None
 ):
     """
     Upload a file to a specific data category.
@@ -145,13 +186,16 @@ async def upload_file(
     try:
         contents = await file.read()
         
+        # Get user's state managers
+        user_state, user_data_manager = get_user_state(session_id)
+        
         # Parse based on file type
         if extension == "csv":
-            parsed = data_source_manager.parse_csv(contents, category)
+            parsed = user_data_manager.parse_csv(contents, category)
         elif extension == "docx":
-            parsed = data_source_manager.parse_docx(contents, category)
+            parsed = user_data_manager.parse_docx(contents, category)
         elif extension == "txt":
-            parsed = data_source_manager.parse_txt(contents, category)
+            parsed = user_data_manager.parse_txt(contents, category)
         else:
             return {"success": False, "error": f"Unsupported file format: {extension}"}
         
@@ -159,21 +203,21 @@ async def upload_file(
             return parsed
         
         # Add to data source manager
-        result = data_source_manager.add_source(category, filename, parsed)
+        result = user_data_manager.add_source(category, filename, parsed)
         
         # Sync with business state
-        combined = data_source_manager.get_combined_state()
+        combined = user_data_manager.get_combined_state()
         if combined["metrics"]:
             # Initialize business state from combined metrics if needed
-            if not business_state.initialized:
+            if not user_state.initialized:
                 # Create a fake row for initialization
                 fake_rows = [combined["metrics"]]
-                business_state.initialize_from_csv(fake_rows)
+                user_state.initialize_from_csv(fake_rows)
             else:
                 # Update existing state with new metrics
                 for key, value in combined["metrics"].items():
-                    business_state.current_state[key] = value
-                business_state._calculate_health_score()
+                    user_state.current_state[key] = value
+                user_state._calculate_health_score()
         
         return {
             "success": True,
@@ -189,37 +233,40 @@ async def upload_file(
                 "word_count": parsed.get("word_count")
             },
             "sources_summary": combined,
-            "health_score": business_state.health_score
+            "health_score": user_state.health_score,
+            "session_id": session_id
         }
         
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-
 @app.get("/sources")
-def get_data_sources():
+def get_data_sources(session_id: Optional[str] = None):
     """Get all uploaded data sources and their status"""
+    user_state, user_data_manager = get_user_state(session_id)
     return {
-        "sources": data_source_manager.get_combined_state(),
-        "history": data_source_manager.get_upload_history(),
+        "sources": user_data_manager.get_combined_state(),
+        "history": user_data_manager.get_upload_history(),
         "categories": {
             cat: {
                 **DATA_CATEGORIES[cat],
-                "uploaded": cat in data_source_manager.sources,
-                "file_count": len(data_source_manager.sources.get(cat, {}).get("files", []))
+                "uploaded": cat in user_data_manager.sources,
+                "file_count": len(user_data_manager.sources.get(cat, {}).get("files", []))
             }
             for cat in DATA_CATEGORIES
-        }
+        },
+        "session_id": session_id
     }
 
 
 @app.delete("/sources/{category}")
-def clear_category(category: str):
+def clear_category(category: str, session_id: Optional[str] = None):
     """Clear all data for a specific category"""
     if category not in DATA_CATEGORIES:
         return {"success": False, "error": f"Invalid category: {category}"}
     
-    success = data_source_manager.clear_category(category)
+    user_state, user_data_manager = get_user_state(session_id)
+    success = user_data_manager.clear_category(category)
     return {
         "success": success,
         "message": f"Cleared all data for {category}" if success else f"No data found for {category}"
@@ -227,10 +274,11 @@ def clear_category(category: str):
 
 
 @app.delete("/sources")
-def clear_all_sources():
+def clear_all_sources(session_id: Optional[str] = None):
     """Clear all data sources"""
-    data_source_manager.clear_all()
-    business_state.__init__()  # Reset business state
+    user_state, user_data_manager = get_user_state(session_id)
+    user_data_manager.clear_all()
+    user_state.__init__()  # Reset business state
     return {"success": True, "message": "All data sources cleared"}
 
 

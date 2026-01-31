@@ -74,19 +74,62 @@ function App() {
   const [driftData, setDriftData] = useState(null);
   const [multiHorizonForecast, setMultiHorizonForecast] = useState(null);
 
+  // Session State (Multi-User Support)
+  const [sessionId, setSessionId] = useState(null);
+
   // UI State
   const [showUploadPanel, setShowUploadPanel] = useState(true);
 
   const fileInputRefs = useRef({});
 
-  // Load categories on mount
+  // Initialize session on mount
   useEffect(() => {
-    axios.get(`${API_URL}/data-categories`).then(res => {
-      setCategories(res.data.categories || {});
-    });
-    loadDataSources();
-    checkMLStatus();
+    initializeSession();
   }, []);
+
+  const initializeSession = async () => {
+    // Check if session exists in localStorage
+    let existingSession = localStorage.getItem("sage_twin_session");
+
+    if (existingSession) {
+      // Verify session is still valid
+      try {
+        const res = await axios.get(`${API_URL}/session/${existingSession}`);
+        if (!res.data.error) {
+          setSessionId(existingSession);
+          loadDataSources(existingSession);
+          checkMLStatus();
+          return;
+        }
+      } catch (e) {
+        // Session expired or invalid, create new one
+      }
+    }
+
+    // Create new session
+    try {
+      const res = await axios.post(`${API_URL}/session/create`);
+      const newSessionId = res.data.session_id;
+      localStorage.setItem("sage_twin_session", newSessionId);
+      setSessionId(newSessionId);
+      checkMLStatus();
+    } catch (error) {
+      console.error("Failed to create session:", error);
+      // Fallback to global state (no session)
+      loadDataSources(null);
+      checkMLStatus();
+    }
+  };
+
+  // Load categories when session is ready
+  useEffect(() => {
+    if (sessionId !== null) {
+      axios.get(`${API_URL}/data-categories`).then(res => {
+        setCategories(res.data.categories || {});
+      });
+      loadDataSources(sessionId);
+    }
+  }, [sessionId]);
 
   const checkMLStatus = async () => {
     try {
@@ -97,22 +140,25 @@ function App() {
     }
   };
 
-  const loadDataSources = async () => {
+  const loadDataSources = async (sid = sessionId) => {
     try {
-      const res = await axios.get(`${API_URL}/sources`);
+      const params = sid ? `?session_id=${sid}` : "";
+      const res = await axios.get(`${API_URL}/sources${params}`);
       setDataSources(res.data);
 
       // Check if initialized
       if (res.data.sources?.total_files > 0) {
         setInitialized(true);
         // Load state
-        const stateRes = await axios.get(`${API_URL}/state`);
+        const stateRes = await axios.get(`${API_URL}/state${params}`);
         if (!stateRes.data.error) {
           setTwinState(stateRes.data);
           setHealthScore(stateRes.data.health_score || 0);
         }
         // Load ML data if enabled
         loadMLData();
+      } else {
+        setInitialized(false);
       }
     } catch (error) {
       console.error("Failed to load sources:", error);
@@ -146,13 +192,13 @@ function App() {
 
     const formData = new FormData();
     formData.append("file", file);
-    formData.append("category", category);
 
     setUploadingCategory(category);
     setLoading(true);
 
     try {
-      await axios.post(`${API_URL}/upload`, formData);
+      const params = sessionId ? `?session_id=${sessionId}` : "";
+      await axios.post(`${API_URL}/upload/${category}${params}`, formData);
       await loadDataSources();
     } catch (error) {
       console.error("Upload failed:", error);
@@ -172,7 +218,8 @@ function App() {
 
     setLoading(true);
     try {
-      await axios.delete(`${API_URL}/sources/${category}`);
+      const params = sessionId ? `?session_id=${sessionId}` : "";
+      await axios.delete(`${API_URL}/sources/${category}${params}`);
       await loadDataSources();
       setSimulationResult(null);
     } catch (error) {
@@ -186,7 +233,8 @@ function App() {
   const runSimulation = async () => {
     setLoading(true);
     try {
-      const res = await axios.post(`${API_URL}/simulate`, adjustments);
+      const params = sessionId ? `?session_id=${sessionId}` : "";
+      const res = await axios.post(`${API_URL}/simulate${params}`, adjustments);
       setSimulationResult(res.data);
       if (res.data.projected_state) {
         setTwinState(prev => ({
@@ -209,8 +257,9 @@ function App() {
   const resetState = async () => {
     setLoading(true);
     try {
-      await axios.post(`${API_URL}/reset`);
-      const stateRes = await axios.get(`${API_URL}/state`);
+      const params = sessionId ? `?session_id=${sessionId}` : "";
+      await axios.post(`${API_URL}/reset${params}`);
+      const stateRes = await axios.get(`${API_URL}/state${params}`);
       if (!stateRes.data.error) {
         setTwinState(stateRes.data);
         setHealthScore(stateRes.data.health_score || 0);
@@ -706,6 +755,14 @@ function App() {
         <div className="ml-badge">
           <span className="ml-dot"></span>
           ML Enabled
+        </div>
+      )}
+
+      {/* Session Badge */}
+      {sessionId && (
+        <div className="session-badge" title={`Session: ${sessionId}`}>
+          <span className="session-icon">👤</span>
+          Your Session
         </div>
       )}
     </div>
