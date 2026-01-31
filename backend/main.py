@@ -362,7 +362,7 @@ def analyze_impact(request: ImpactRequest):
 def run_simulation(request: SimulationRequest, session_id: Optional[str] = Query(None)):
     """Run full simulation with multi-agent system"""
     # Get user session components
-    user_state, _ = get_user_state(session_id)
+    user_state, user_data_manager = get_user_state(session_id)
     
     # Get user's multi-agent engine
     user_engine = multi_agent_engine
