@@ -169,19 +169,30 @@ function App() {
     if (!mlEnabled) return;
 
     try {
-      // Load multi-horizon forecast
+      // Load multi-horizon forecast - may fail if no data
       const forecastRes = await axios.get(`${API_URL}/ml/forecast/multi-horizon`);
       setMultiHorizonForecast(forecastRes.data);
+    } catch (error) {
+      console.log("Forecast data not available yet");
+      setMultiHorizonForecast(null);
+    }
 
+    try {
       // Load churn prediction
       const churnRes = await axios.post(`${API_URL}/ml/predict/churn`, { revenue_per_customer: 1000 });
       setChurnData(churnRes.data);
+    } catch (error) {
+      console.log("Churn data not available yet");
+      setChurnData(null);
+    }
 
+    try {
       // Load drift monitoring
       const driftRes = await axios.get(`${API_URL}/ml/monitoring/drift`);
       setDriftData(driftRes.data);
     } catch (error) {
-      console.error("Failed to load ML data:", error);
+      console.log("Drift data not available yet");
+      setDriftData(null);
     }
   };
 
