@@ -308,19 +308,22 @@ def run_simulation(request: SimulationRequest):
         adjustments["customers"] = -10
         adjustments["sentiment"] = -20
     
+    # Always simulate from BASELINE state (original data), not current state
+    # This ensures each simulation is independent and doesn't compound
     simulation_result = multi_agent_engine.run_simulation(
-        current_state=business_state.current_state.copy(),
+        current_state=business_state.baseline_state.copy(),  # Use baseline, not current
         adjustments=adjustments
     )
     
     propagation_results = {}
     for metric, change in adjustments.items():
-        if change != 0 and metric in business_state.current_state:
+        if change != 0 and metric in business_state.baseline_state:
             propagation_results[metric] = propagate_change(
-                metric, change, business_state.current_state, max_depth=3
+                metric, change, business_state.baseline_state, max_depth=3
             )
     
-    business_state.update_state(simulation_result["projected_state"], "simulation")
+    # Update current state for display, but baseline remains unchanged
+    business_state.current_state = simulation_result["projected_state"].copy()
     
     forecast = generate_forecast(
         simulation_result["projected_state"],
