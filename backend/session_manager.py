@@ -14,6 +14,7 @@ from data_sources import DataSourceManager
 from monitoring.drift_detector import DriftDetector
 from ml.models.revenue_forecaster import RevenueForecaster
 from ml.models.churn_predictor import ChurnPredictor
+from multi_agent_engine import MultiAgentEngine
 
 
 class UserSession:
@@ -23,6 +24,7 @@ class UserSession:
         self.session_id = session_id
         self.business_state = BusinessState()
         self.data_source_manager = DataSourceManager()
+        self.multi_agent_engine = MultiAgentEngine()  # Isolated simulation engine
         self.drift_detector = DriftDetector()
         self.revenue_forecaster = RevenueForecaster()
         self.churn_predictor = ChurnPredictor()

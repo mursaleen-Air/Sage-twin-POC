@@ -359,9 +359,19 @@ def analyze_impact(request: ImpactRequest):
 # ============================================
 
 @app.post("/simulate")
-def run_simulation(request: SimulationRequest):
+def run_simulation(request: SimulationRequest, session_id: Optional[str] = Query(None)):
     """Run full simulation with multi-agent system"""
-    if not business_state.initialized:
+    # Get user session components
+    user_state, _ = get_user_state(session_id)
+    
+    # Get user's multi-agent engine
+    user_engine = multi_agent_engine
+    if session_id:
+        session = session_manager.get_session(session_id)
+        if session:
+            user_engine = session.multi_agent_engine
+    
+    if not user_state.initialized:
         return {"error": "Digital Twin not initialized. Please upload data first."}
     
     adjustments = {
@@ -377,21 +387,20 @@ def run_simulation(request: SimulationRequest):
         adjustments["sentiment"] = -20
     
     # Always simulate from BASELINE state (original data), not current state
-    # This ensures each simulation is independent and doesn't compound
-    simulation_result = multi_agent_engine.run_simulation(
-        current_state=business_state.baseline_state.copy(),  # Use baseline, not current
+    simulation_result = user_engine.run_simulation(
+        current_state=user_state.baseline_state.copy(),
         adjustments=adjustments
     )
     
     propagation_results = {}
     for metric, change in adjustments.items():
-        if change != 0 and metric in business_state.baseline_state:
+        if change != 0 and metric in user_state.baseline_state:
             propagation_results[metric] = propagate_change(
-                metric, change, business_state.baseline_state, max_depth=3
+                metric, change, user_state.baseline_state, max_depth=3
             )
     
-    # Update current state for display, but baseline remains unchanged
-    business_state.current_state = simulation_result["projected_state"].copy()
+    # Update current state for display
+    user_state.current_state = simulation_result["projected_state"].copy()
     
     forecast = generate_forecast(
         simulation_result["projected_state"],
@@ -463,30 +472,34 @@ def get_forecast():
 # ============================================
 
 @app.get("/state")
-def get_state():
+def get_state(session_id: Optional[str] = None):
     """Get current Digital Twin state snapshot"""
-    if not business_state.initialized:
+    user_state, user_data_manager = get_user_state(session_id)
+    
+    if not user_state.initialized:
         return {"error": "Digital Twin not initialized. Please upload data first."}
     
     return {
-        **business_state.get_snapshot(),
-        "data_sources": data_source_manager.get_combined_state()
+        **user_state.get_snapshot(),
+        "data_sources": user_data_manager.get_combined_state()
     }
 
 
 @app.post("/reset")
-def reset_state():
+def reset_state(session_id: Optional[str] = None):
     """Reset to baseline state"""
-    if not business_state.initialized:
+    user_state, _ = get_user_state(session_id)
+    
+    if not user_state.initialized:
         return {"error": "Digital Twin not initialized"}
     
-    business_state.current_state = business_state.baseline_state.copy()
-    business_state._calculate_health_score()
+    user_state.current_state = user_state.baseline_state.copy()
+    user_state._calculate_health_score()
     
     return {
         "success": True,
         "message": "State reset to baseline",
-        "state": business_state.get_snapshot()
+        "state": user_state.get_snapshot()
     }
 
 
