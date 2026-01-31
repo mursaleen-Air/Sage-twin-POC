@@ -14,7 +14,7 @@ from data_sources import DataSourceManager
 from monitoring.drift_detector import DriftDetector
 from ml.models.revenue_forecaster import RevenueForecaster
 from ml.models.churn_predictor import ChurnPredictor
-from multi_agent_engine import MultiAgentEngine
+from multi_agents import MultiAgentEngine
 
 
 class UserSession:

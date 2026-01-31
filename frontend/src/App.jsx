@@ -248,14 +248,38 @@ function App() {
     try {
       const params = sessionId ? `?session_id=${sessionId}` : "";
       const res = await axios.post(`${API_URL}/simulate${params}`, adjustments);
-      setSimulationResult(res.data);
+
+      // Build impact_analysis from baseline and projected states
+      const baseline = res.data.baseline_state || {};
+      const projected = res.data.projected_state || {};
+      const impactAnalysis = {};
+
+      // Key metrics to show in impact analysis
+      const keyMetrics = ["revenue", "customers", "sentiment", "churn_rate", "costs", "delivery_delay"];
+
+      for (const metric of keyMetrics) {
+        if (baseline[metric] !== undefined && projected[metric] !== undefined) {
+          const before = baseline[metric];
+          const after = projected[metric];
+          const delta = before !== 0 ? ((after - before) / before) * 100 : 0;
+          impactAnalysis[metric] = { before, after, delta };
+        }
+      }
+
+      // Add computed impact_analysis to result
+      const enrichedResult = {
+        ...res.data,
+        impact_analysis: impactAnalysis
+      };
+
+      setSimulationResult(enrichedResult);
       if (res.data.projected_state) {
         setTwinState(prev => ({
           ...prev,
           current_state: res.data.projected_state,
         }));
-        setHealthScore(res.data.new_health_score || healthScore);
-        setConfidenceScore(res.data.confidence_score || 0);
+        setHealthScore(res.data.health_score || healthScore);
+        setConfidenceScore(res.data.confidence || 0);
       }
       // Reload ML predictions after simulation
       loadMLData();
@@ -478,17 +502,111 @@ function App() {
               <div key={idx} className="agent-card">
                 <div className="agent-header">
                   <span className="agent-name">{agent.agent}</span>
-                  <span className="agent-confidence" style={{ color: getHealthColor(agent.confidence * 100) }}>
-                    {(agent.confidence * 100).toFixed(0)}%
+                  <span className="agent-confidence" style={{ color: getHealthColor(agent.confidence) }}>
+                    {agent.confidence?.toFixed(0)}%
                   </span>
                 </div>
-                <p className="agent-message">{agent.analysis || agent.recommendation}</p>
+
+                {agent.rules_triggered?.length > 0 && (
+                  <div className="agent-rules">
+                    {agent.rules_triggered.slice(0, 3).map((rule, j) => (
+                      <div key={j} className="rule-item">📌 {rule}</div>
+                    ))}
+                  </div>
+                )}
+
+                {agent.warnings?.length > 0 && (
+                  <div className="agent-warnings">
+                    {agent.warnings.map((warn, j) => (
+                      <div key={j} className="warning-item">⚠️ {warn}</div>
+                    ))}
+                  </div>
+                )}
               </div>
             )) || (
                 <p className="no-data">Run a simulation to see agent recommendations</p>
               )}
           </div>
         </div>
+
+        {/* Strategic Priority */}
+        {simulationResult?.strategic_priority && (
+          <div className="panel priority-panel">
+            <h3>🎯 Strategic Priority</h3>
+            <div className="priority-badge">{simulationResult.strategic_priority}</div>
+          </div>
+        )}
+
+        {/* Recommendations */}
+        {simulationResult?.recommendations?.length > 0 && (
+          <div className="panel recommendations-panel">
+            <h3>💡 Recommendations</h3>
+            <ul className="recommendations-list">
+              {simulationResult.recommendations.map((rec, i) => (
+                <li key={i}>{rec}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Warnings */}
+        {simulationResult?.warnings?.length > 0 && (
+          <div className="panel warnings-panel">
+            <h3>⚠️ Warnings</h3>
+            <ul className="warnings-list">
+              {simulationResult.warnings.map((warn, i) => (
+                <li key={i}>{warn}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Tradeoffs */}
+        {simulationResult?.tradeoffs?.length > 0 && (
+          <div className="panel tradeoffs-panel">
+            <h3>⚖️ Tradeoffs</h3>
+            <ul className="tradeoffs-list">
+              {simulationResult.tradeoffs.map((trade, i) => (
+                <li key={i}>{trade}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* 3-Month Forecast */}
+        {simulationResult?.forecast && (
+          <div className="panel forecast-panel">
+            <h3>🔮 3-Month Forecast</h3>
+            <div className="forecast-chart-sim">
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={simulationResult.forecast.monthly_projections || []}>
+                  <defs>
+                    <linearGradient id="revenueGradSim" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#00ff88" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#00ff88" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="month" tick={{ fill: "#888", fontSize: 11 }} axisLine={false} />
+                  <YAxis tick={{ fill: "#888", fontSize: 11 }} axisLine={false} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "rgba(15,15,26,0.95)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: "8px"
+                    }}
+                  />
+                  <Area type="monotone" dataKey="revenue" stroke="#00ff88" fill="url(#revenueGradSim)" name="Revenue" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+            {simulationResult.forecast.summary && (
+              <div className={`forecast-summary outlook-${simulationResult.forecast.summary.outlook}`}>
+                <strong>Outlook: {simulationResult.forecast.summary.outlook?.toUpperCase()}</strong>
+                <p>{simulationResult.forecast.summary.description}</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </>
   );

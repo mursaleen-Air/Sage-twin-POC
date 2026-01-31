@@ -1184,3 +1184,176 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============================================
+   ENHANCED SIMULATION PANELS
+   ============================================ */
+
+/* Agent Rules */
+.agent-rules {
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  background: rgba(139, 92, 246, 0.1);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+}
+
+.rule-item {
+  color: var(--text-secondary);
+  padding: 0.25rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.rule-item:last-child {
+  border-bottom: none;
+}
+
+/* Agent Warnings */
+.agent-warnings {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--danger);
+}
+
+.warning-item {
+  color: var(--danger-light);
+  font-size: 0.75rem;
+  padding: 0.25rem 0;
+}
+
+/* Strategic Priority Panel */
+.priority-panel {
+  text-align: center;
+}
+
+.priority-badge {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  background: var(--gradient-primary);
+  border-radius: var(--radius-lg);
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  box-shadow: var(--shadow-md);
+}
+
+/* Recommendations Panel */
+.recommendations-panel {
+  border-left: 3px solid var(--success);
+}
+
+.recommendations-list {
+  list-style: none;
+  padding: 0;
+}
+
+.recommendations-list li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.recommendations-list li:before {
+  content: "💡";
+}
+
+.recommendations-list li:last-child {
+  border-bottom: none;
+}
+
+/* Warnings Panel */
+.warnings-panel {
+  border-left: 3px solid var(--warning);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.warnings-list {
+  list-style: none;
+  padding: 0;
+}
+
+.warnings-list li {
+  padding: 0.5rem 0;
+  color: var(--warning);
+  font-size: 0.9rem;
+}
+
+.warnings-list li:before {
+  content: "⚠️ ";
+}
+
+/* Tradeoffs Panel */
+.tradeoffs-panel {
+  border-left: 3px solid var(--secondary);
+}
+
+.tradeoffs-list {
+  list-style: none;
+  padding: 0;
+}
+
+.tradeoffs-list li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.tradeoffs-list li:before {
+  content: "⚖️ ";
+}
+
+.tradeoffs-list li:last-child {
+  border-bottom: none;
+}
+
+/* Forecast Chart in Simulation */
+.forecast-chart-sim {
+  margin: 1rem 0;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+}
+
+/* Forecast Summary */
+.forecast-summary {
+  padding: 1rem;
+  border-radius: var(--radius-md);
+  margin-top: 1rem;
+}
+
+.forecast-summary strong {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+.forecast-summary p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.outlook-positive,
+.outlook-good {
+  background: rgba(16, 185, 129, 0.1);
+  border-left: 3px solid var(--success);
+}
+
+.outlook-neutral,
+.outlook-stable {
+  background: rgba(59, 130, 246, 0.1);
+  border-left: 3px solid var(--secondary);
+}
+
+.outlook-negative,
+.outlook-challenging,
+.outlook-concerning {
+  background: rgba(239, 68, 68, 0.1);
+  border-left: 3px solid var(--danger);
+}

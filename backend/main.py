@@ -8,7 +8,7 @@ import os
 import csv
 import io
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
@@ -408,10 +408,12 @@ def run_simulation(request: SimulationRequest, session_id: Optional[str] = Query
         months=3
     )
     
-    deltas = business_state.get_deltas()
+    deltas = user_state.get_deltas()
     
     return {
         "success": True,
+        "baseline_state": simulation_result["baseline_state"],
+        "projected_state": simulation_result["projected_state"],
         "comparison": {
             "baseline": simulation_result["baseline_state"],
             "projected": simulation_result["projected_state"],
@@ -428,7 +430,7 @@ def run_simulation(request: SimulationRequest, session_id: Optional[str] = Query
         "strategic_priority": simulation_result["strategic_priority"],
         "forecast": forecast,
         "adjustments": adjustments,
-        "data_sources": data_source_manager.get_combined_state()
+        "data_sources": user_data_manager.get_combined_state()
     }
 
 
