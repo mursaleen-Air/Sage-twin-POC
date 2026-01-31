@@ -156,7 +156,7 @@ function App() {
           setHealthScore(stateRes.data.health_score || 0);
         }
         // Load ML data if enabled
-        loadMLData();
+        loadMLData(sid);
       } else {
         setInitialized(false);
       }
@@ -165,12 +165,14 @@ function App() {
     }
   };
 
-  const loadMLData = async () => {
+  const loadMLData = async (sid = sessionId) => {
     if (!mlEnabled) return;
+
+    const params = sid ? `?session_id=${sid}` : "";
 
     try {
       // Load multi-horizon forecast - may fail if no data
-      const forecastRes = await axios.get(`${API_URL}/ml/forecast/multi-horizon`);
+      const forecastRes = await axios.get(`${API_URL}/ml/forecast/multi-horizon${params}`);
       setMultiHorizonForecast(forecastRes.data);
     } catch (error) {
       console.log("Forecast data not available yet");
@@ -179,7 +181,7 @@ function App() {
 
     try {
       // Load churn prediction
-      const churnRes = await axios.post(`${API_URL}/ml/predict/churn`, { revenue_per_customer: 1000 });
+      const churnRes = await axios.post(`${API_URL}/ml/predict/churn${params}`, { revenue_per_customer: 1000 });
       setChurnData(churnRes.data);
     } catch (error) {
       console.log("Churn data not available yet");
@@ -188,7 +190,7 @@ function App() {
 
     try {
       // Load drift monitoring
-      const driftRes = await axios.get(`${API_URL}/ml/monitoring/drift`);
+      const driftRes = await axios.get(`${API_URL}/ml/monitoring/drift${params}`);
       setDriftData(driftRes.data);
     } catch (error) {
       console.log("Drift data not available yet");
@@ -322,12 +324,14 @@ function App() {
   };
 
   const getCategoryStatus = (category) => {
-    const sources = dataSources.sources?.by_category || {};
+    // API returns: { sources: { sources: { revenue: { files: [...], ... } } } }
+    const sources = dataSources.sources?.sources || {};
     return sources[category]?.files?.length > 0;
   };
 
   const getCategoryFiles = (category) => {
-    const sources = dataSources.sources?.by_category || {};
+    const sources = dataSources.sources?.sources || {};
+    // Files are just string arrays: ["filename.csv"]
     return sources[category]?.files || [];
   };
 
@@ -677,10 +681,10 @@ function App() {
               {/* Show uploaded files */}
               {getCategoryStatus(key) && (
                 <div className="uploaded-files">
-                  {getCategoryFiles(key).map((file, idx) => (
+                  {getCategoryFiles(key).map((filename, idx) => (
                     <div key={idx} className="uploaded-file">
                       <span className="file-icon">📄</span>
-                      <span className="file-name">{file.filename}</span>
+                      <span className="file-name">{filename}</span>
                     </div>
                   ))}
                 </div>

@@ -3,7 +3,7 @@ ML API Endpoints
 Exposes machine learning capabilities through REST API.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Dict, List, Any, Optional
 
@@ -14,11 +14,34 @@ from ml.models.revenue_forecaster import RevenueForecaster, create_revenue_forec
 from ml.models.churn_predictor import ChurnPredictor, create_churn_predictor
 from monitoring.drift_detector import drift_detector, DriftSeverity
 
+
 # Import state for data access
 from state_engine import business_state
+from session_manager import session_manager
 
+
+def get_user_components(session_id: Optional[str] = None):
+    """Get session-specific components or fall back to globals"""
+    if session_id:
+        session = session_manager.get_session(session_id)
+        if session:
+            return (
+                session.business_state,
+                session.revenue_forecaster,
+                session.churn_predictor,
+                session.drift_detector
+            )
+    
+    # Fallback to globals
+    return (
+        business_state, 
+        revenue_forecaster, 
+        churn_predictor, 
+        drift_detector
+    )
 
 router = APIRouter(prefix="/ml", tags=["Machine Learning"])
+
 
 
 # ============================================
@@ -130,13 +153,15 @@ def forecast_revenue(request: ForecastRequest):
 
 
 @router.get("/forecast/multi-horizon")
-def forecast_multi_horizon():
+def forecast_multi_horizon(session_id: Optional[str] = Query(None)):
     """Generate forecasts for multiple time horizons"""
-    if not business_state.initialized:
+    user_state, user_forecaster, _, _ = get_user_components(session_id)
+    
+    if not user_state.initialized:
         raise HTTPException(status_code=400, detail="Digital Twin not initialized")
     
-    forecasts = revenue_forecaster.predict_multi_horizon(
-        current_state=business_state.current_state,
+    forecasts = user_forecaster.predict_multi_horizon(
+        current_state=user_state.current_state,
         horizons=[7, 30, 90, 180, 365]
     )
     
@@ -149,7 +174,7 @@ def forecast_multi_horizon():
             }
             for h, f in forecasts.items()
         },
-        "current_revenue": business_state.current_state.get("revenue", 0)
+        "current_revenue": user_state.current_state.get("revenue", 0)
     }
 
 
@@ -185,13 +210,15 @@ def monte_carlo_forecast(request: ForecastRequest):
 # ============================================
 
 @router.post("/predict/churn")
-def predict_churn(request: ChurnRequest):
+def predict_churn(request: ChurnRequest, session_id: Optional[str] = Query(None)):
     """Predict customer churn risk"""
-    if not business_state.initialized:
+    user_state, _, user_churn_predictor, _ = get_user_components(session_id)
+    
+    if not user_state.initialized:
         raise HTTPException(status_code=400, detail="Digital Twin not initialized")
     
-    prediction = churn_predictor.predict(
-        customer_state=business_state.current_state,
+    prediction = user_churn_predictor.predict(
+        customer_state=user_state.current_state,
         revenue_per_customer=request.revenue_per_customer
     )
     
@@ -320,9 +347,11 @@ def get_model_details(model_id: str):
 # ============================================
 
 @router.get("/monitoring/drift")
-def check_drift():
+def check_drift(session_id: Optional[str] = Query(None)):
     """Check for data and model drift"""
-    report = drift_detector.check_drift()
+    _, _, _, user_drift_detector = get_user_components(session_id)
+    
+    report = user_drift_detector.check_drift()
     
     return {
         "drift_report": {

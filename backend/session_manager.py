@@ -11,6 +11,11 @@ from state_engine import BusinessState
 from data_sources import DataSourceManager
 
 
+from monitoring.drift_detector import DriftDetector
+from ml.models.revenue_forecaster import RevenueForecaster
+from ml.models.churn_predictor import ChurnPredictor
+
+
 class UserSession:
     """Represents a single user's session with their own state"""
     
@@ -18,6 +23,9 @@ class UserSession:
         self.session_id = session_id
         self.business_state = BusinessState()
         self.data_source_manager = DataSourceManager()
+        self.drift_detector = DriftDetector()
+        self.revenue_forecaster = RevenueForecaster()
+        self.churn_predictor = ChurnPredictor()
         self.created_at = datetime.now()
         self.last_accessed = datetime.now()
     
