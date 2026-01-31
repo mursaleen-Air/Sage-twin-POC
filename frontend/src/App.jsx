@@ -11,6 +11,11 @@ import {
   AreaChart,
   Area,
   Line,
+  LineChart,
+  ComposedChart,
+  Legend,
+  PieChart,
+  Pie,
 } from "recharts";
 import "./App.css";
 
@@ -40,6 +45,7 @@ function App() {
   // State
   const [initialized, setInitialized] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("dashboard");
 
   // Data Sources
   const [categories, setCategories] = useState({});
@@ -61,6 +67,13 @@ function App() {
   });
   const [simulationResult, setSimulationResult] = useState(null);
 
+  // ML State (NEW)
+  const [mlEnabled, setMlEnabled] = useState(false);
+  const [forecastData, setForecastData] = useState(null);
+  const [churnData, setChurnData] = useState(null);
+  const [driftData, setDriftData] = useState(null);
+  const [multiHorizonForecast, setMultiHorizonForecast] = useState(null);
+
   // UI State
   const [showUploadPanel, setShowUploadPanel] = useState(true);
 
@@ -72,7 +85,17 @@ function App() {
       setCategories(res.data.categories || {});
     });
     loadDataSources();
+    checkMLStatus();
   }, []);
+
+  const checkMLStatus = async () => {
+    try {
+      const res = await axios.get(`${API_URL}/`);
+      setMlEnabled(res.data.ml_enabled || false);
+    } catch (error) {
+      console.error("Failed to check ML status:", error);
+    }
+  };
 
   const loadDataSources = async () => {
     try {
@@ -88,9 +111,31 @@ function App() {
           setTwinState(stateRes.data);
           setHealthScore(stateRes.data.health_score || 0);
         }
+        // Load ML data if enabled
+        loadMLData();
       }
     } catch (error) {
       console.error("Failed to load sources:", error);
+    }
+  };
+
+  const loadMLData = async () => {
+    if (!mlEnabled) return;
+
+    try {
+      // Load multi-horizon forecast
+      const forecastRes = await axios.get(`${API_URL}/ml/forecast/multi-horizon`);
+      setMultiHorizonForecast(forecastRes.data);
+
+      // Load churn prediction
+      const churnRes = await axios.post(`${API_URL}/ml/predict/churn`, { revenue_per_customer: 1000 });
+      setChurnData(churnRes.data);
+
+      // Load drift monitoring
+      const driftRes = await axios.get(`${API_URL}/ml/monitoring/drift`);
+      setDriftData(driftRes.data);
+    } catch (error) {
+      console.error("Failed to load ML data:", error);
     }
   };
 
@@ -99,59 +144,41 @@ function App() {
     const file = event.target.files[0];
     if (!file) return;
 
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("category", category);
+
     setUploadingCategory(category);
     setLoading(true);
 
-    const formData = new FormData();
-    formData.append("file", file);
-
     try {
-      const res = await axios.post(`${API_URL}/upload/${category}`, formData);
-
-      if (res.data.success) {
-        setInitialized(true);
-        setHealthScore(res.data.health_score || 0);
-        await loadDataSources();
-
-        // Refresh state
-        const stateRes = await axios.get(`${API_URL}/state`);
-        if (!stateRes.data.error) {
-          setTwinState(stateRes.data);
-        }
-      } else {
-        alert(`Upload failed: ${res.data.error}`);
-      }
+      await axios.post(`${API_URL}/upload`, formData);
+      await loadDataSources();
     } catch (error) {
       console.error("Upload failed:", error);
-      alert("Upload failed. Please check the file format.");
-    }
-
-    setUploadingCategory(null);
-    setLoading(false);
-
-    // Reset file input
-    if (fileInputRefs.current[category]) {
-      fileInputRefs.current[category].value = "";
+      alert(`Failed to upload file: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setLoading(false);
+      setUploadingCategory(null);
+      if (fileInputRefs.current[category]) {
+        fileInputRefs.current[category].value = "";
+      }
     }
   };
 
   // Clear category
   const clearCategory = async (category) => {
+    if (!confirm(`Clear all ${category} data?`)) return;
+
+    setLoading(true);
     try {
       await axios.delete(`${API_URL}/sources/${category}`);
       await loadDataSources();
-
-      // Refresh state
-      const stateRes = await axios.get(`${API_URL}/state`);
-      if (!stateRes.data.error) {
-        setTwinState(stateRes.data);
-        setHealthScore(stateRes.data.health_score || 0);
-      } else {
-        setInitialized(false);
-        setTwinState(null);
-      }
+      setSimulationResult(null);
     } catch (error) {
-      console.error("Clear failed:", error);
+      console.error("Failed to clear:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -161,56 +188,59 @@ function App() {
     try {
       const res = await axios.post(`${API_URL}/simulate`, adjustments);
       setSimulationResult(res.data);
-      setHealthScore(res.data.health_score);
-
-      if (res.data.comparison) {
+      if (res.data.projected_state) {
         setTwinState(prev => ({
           ...prev,
-          current_state: res.data.comparison.projected,
-          deltas: res.data.comparison.deltas
+          current_state: res.data.projected_state,
         }));
+        setHealthScore(res.data.new_health_score || healthScore);
+        setConfidenceScore(res.data.confidence_score || 0);
       }
+      // Reload ML predictions after simulation
+      loadMLData();
     } catch (error) {
       console.error("Simulation failed:", error);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // Reset State
   const resetState = async () => {
+    setLoading(true);
     try {
-      const res = await axios.post(`${API_URL}/reset`);
-      if (res.data.success) {
-        setTwinState(res.data.state);
-        setSimulationResult(null);
-        setAdjustments({
-          price: 0,
-          marketing_spend: 0,
-          costs: 0,
-          delivery_delay: 0,
-          market_shock: false,
-        });
-        setHealthScore(res.data.state.health_score);
+      await axios.post(`${API_URL}/reset`);
+      const stateRes = await axios.get(`${API_URL}/state`);
+      if (!stateRes.data.error) {
+        setTwinState(stateRes.data);
+        setHealthScore(stateRes.data.health_score || 0);
       }
+      setSimulationResult(null);
+      setAdjustments({
+        price: 0,
+        marketing_spend: 0,
+        costs: 0,
+        delivery_delay: 0,
+        market_shock: false,
+      });
+      loadMLData();
     } catch (error) {
       console.error("Reset failed:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
   // Format helpers
   const formatValue = (value, metric) => {
-    if (typeof value !== "number") return value;
-    if (["revenue", "costs", "marketing_spend", "profit"].includes(metric)) {
-      return new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD",
-        minimumFractionDigits: 0,
-      }).format(value);
+    if (value === undefined || value === null) return "N/A";
+    if (metric === "revenue" || metric === "profit" || metric === "costs" || metric === "marketing_spend") {
+      return `$${Number(value).toLocaleString()}`;
     }
-    if (["churn_rate", "risk_score", "sentiment"].includes(metric)) {
-      return `${value.toFixed(1)}${metric === "churn_rate" ? "%" : ""}`;
+    if (metric === "margin" || metric === "growth" || metric === "sentiment" || metric === "risk_score") {
+      return Number(value).toFixed(1);
     }
-    return value.toLocaleString();
+    return Number(value).toLocaleString();
   };
 
   const getHealthColor = (score) => {
@@ -220,515 +250,462 @@ function App() {
   };
 
   const getDeltaClass = (delta) => {
-    if (delta > 0) return "positive";
-    if (delta < 0) return "negative";
-    return "neutral";
+    if (!delta) return "";
+    return delta > 0 ? "delta-positive" : delta < 0 ? "delta-negative" : "";
   };
 
-  const getForecastData = () => {
-    if (!simulationResult?.forecast?.projections) return [];
-    const { projections } = simulationResult.forecast;
-    const months = projections.revenue?.map(p => p.month) || [];
-
-    return months.map((month, i) => ({
-      month,
-      revenue: projections.revenue?.[i]?.value / 1000 || 0,
-      sentiment: projections.sentiment?.[i]?.value || 0,
-      risk: projections.risk_score?.[i]?.value || 0,
-    }));
+  const getRiskColor = (risk) => {
+    if (risk === "low") return COLORS.success;
+    if (risk === "medium") return COLORS.warning;
+    if (risk === "high") return COLORS.danger;
+    return COLORS.danger;
   };
 
-  // Get upload status for a category
   const getCategoryStatus = (category) => {
-    const catData = dataSources.categories?.[category];
-    return {
-      uploaded: catData?.uploaded || false,
-      fileCount: catData?.file_count || 0,
-      files: dataSources.sources?.sources?.[category]?.files || []
-    };
+    const sources = dataSources.sources?.by_category || {};
+    return sources[category]?.files?.length > 0;
   };
 
-  return (
-    <div className="app-container twin-mode">
-      {/* Header */}
-      <header className="header">
-        <div className="header-left">
-          <div className="logo">
-            <span className="logo-icon">🏢</span>
-            <div className="logo-text">
-              <h1>SAGE-Twin</h1>
-              <span className="logo-subtitle">Digital Twin POC</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="header-center">
-          {initialized && (
-            <div className="health-indicator">
-              <div
-                className="health-ring"
-                style={{
-                  background: `conic-gradient(${getHealthColor(healthScore)} ${healthScore * 3.6}deg, rgba(255,255,255,0.1) 0deg)`
-                }}
-              >
-                <div className="health-inner">
-                  <span className="health-value">{Math.round(healthScore)}</span>
-                  <span className="health-label">Health</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="header-right">
-          <button
-            className={`btn btn-ghost ${showUploadPanel ? "active" : ""}`}
-            onClick={() => setShowUploadPanel(!showUploadPanel)}
-          >
-            📁 Data Sources
-          </button>
-
-          {initialized && (
-            <button className="btn btn-ghost" onClick={resetState}>
-              🔄 Reset
-            </button>
-          )}
-        </div>
-      </header>
-
-      {/* Data Sources Panel */}
-      {showUploadPanel && (
-        <div className="data-sources-panel">
-          <div className="panel-header">
-            <h3>📂 Data Sources</h3>
-            <span className="sources-count">
-              {dataSources.sources?.total_files || 0} files uploaded
-            </span>
-          </div>
-
-          <div className="categories-grid">
-            {Object.entries(categories).map(([key, cat]) => {
-              const status = getCategoryStatus(key);
-              const isUploading = uploadingCategory === key;
-
-              return (
-                <div
-                  key={key}
-                  className={`category-card ${status.uploaded ? "has-data" : ""} ${isUploading ? "uploading" : ""}`}
-                >
-                  <div className="category-icon">{cat.icon}</div>
-                  <div className="category-info">
-                    <div className="category-name">{cat.name}</div>
-                    <div className="category-desc">{cat.description}</div>
-                    <div className="category-formats">
-                      {cat.supported_formats.map(f => (
-                        <span key={f} className="format-badge">.{f}</span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="category-status">
-                    {status.uploaded ? (
-                      <>
-                        <div className="files-list">
-                          {status.files.map((file, i) => (
-                            <span key={i} className="file-badge">📄 {file}</span>
-                          ))}
-                        </div>
-                        <button
-                          className="btn btn-sm btn-danger"
-                          onClick={() => clearCategory(key)}
-                        >
-                          ✕ Clear
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        className="btn btn-sm btn-upload"
-                        onClick={() => fileInputRefs.current[key]?.click()}
-                        disabled={isUploading}
-                      >
-                        {isUploading ? "Uploading..." : "➕ Upload"}
-                      </button>
-                    )}
-                  </div>
-
-                  <input
-                    type="file"
-                    ref={el => fileInputRefs.current[key] = el}
-                    accept={cat.supported_formats.map(f => `.${f}`).join(",")}
-                    onChange={(e) => handleFileUpload(e, key)}
-                    style={{ display: "none" }}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Main Content */}
-      {!initialized ? (
-        <div className="welcome-screen">
-          <div className="welcome-content">
-            <div className="welcome-icon">🏭</div>
-            <h2>Initialize Your Digital Twin</h2>
-            <p>Upload your business data files to create your digital twin simulation environment. You can upload multiple files across different categories.</p>
-
-            <div className="sample-format">
-              <h4>Supported Data Types:</h4>
-              <div className="data-types-list">
-                <div className="data-type">💰 <strong>Revenue</strong> - Financial metrics (CSV)</div>
-                <div className="data-type">👥 <strong>Customers</strong> - Customer data (CSV)</div>
-                <div className="data-type">💬 <strong>Reviews</strong> - Feedback & reviews (CSV, DOCX, TXT)</div>
-                <div className="data-type">📢 <strong>Marketing</strong> - Campaign data (CSV)</div>
-                <div className="data-type">🚚 <strong>Operations</strong> - Delivery & logistics (CSV)</div>
-              </div>
-            </div>
-
-            <button
-              className="btn btn-primary btn-lg"
-              onClick={() => setShowUploadPanel(true)}
-            >
-              📁 Upload Data Sources
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="main-layout">
-          {/* Left Panel - Controls */}
-          <div className="control-panel">
-            <div className="panel-section">
-              <h3 className="section-title">
-                <span className="section-icon">⚙️</span>
-                Simulation Controls
-              </h3>
-
-              {/* Sliders */}
-              <div className="control-group">
-                <div className="control-header">
-                  <label>Price Change</label>
-                  <span className={`control-value ${getDeltaClass(adjustments.price)}`}>
-                    {adjustments.price > 0 ? "+" : ""}{adjustments.price}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="-30"
-                  max="30"
-                  value={adjustments.price}
-                  onChange={(e) => setAdjustments(prev => ({ ...prev, price: Number(e.target.value) }))}
-                  className="slider"
-                />
-              </div>
-
-              <div className="control-group">
-                <div className="control-header">
-                  <label>Marketing Spend</label>
-                  <span className={`control-value ${getDeltaClass(adjustments.marketing_spend)}`}>
-                    {adjustments.marketing_spend > 0 ? "+" : ""}{adjustments.marketing_spend}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="-50"
-                  max="100"
-                  value={adjustments.marketing_spend}
-                  onChange={(e) => setAdjustments(prev => ({ ...prev, marketing_spend: Number(e.target.value) }))}
-                  className="slider"
-                />
-              </div>
-
-              <div className="control-group">
-                <div className="control-header">
-                  <label>Cost Change</label>
-                  <span className={`control-value ${getDeltaClass(adjustments.costs)}`}>
-                    {adjustments.costs > 0 ? "+" : ""}{adjustments.costs}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="-30"
-                  max="30"
-                  value={adjustments.costs}
-                  onChange={(e) => setAdjustments(prev => ({ ...prev, costs: Number(e.target.value) }))}
-                  className="slider"
-                />
-              </div>
-
-              <div className="control-group">
-                <div className="control-header">
-                  <label>Delivery Delay</label>
-                  <span className={`control-value ${getDeltaClass(adjustments.delivery_delay)}`}>
-                    {adjustments.delivery_delay > 0 ? "+" : ""}{adjustments.delivery_delay} days
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="-3"
-                  max="7"
-                  value={adjustments.delivery_delay}
-                  onChange={(e) => setAdjustments(prev => ({ ...prev, delivery_delay: Number(e.target.value) }))}
-                  className="slider"
-                />
-              </div>
-
-              {/* Market Shock Toggle */}
-              <div className="control-group toggle-group">
-                <label>Market Shock</label>
-                <button
-                  className={`toggle-btn ${adjustments.market_shock ? "active" : ""}`}
-                  onClick={() => setAdjustments(prev => ({ ...prev, market_shock: !prev.market_shock }))}
-                >
-                  {adjustments.market_shock ? "🔥 Active" : "💤 Off"}
-                </button>
-              </div>
-
-              {/* Run Button */}
-              <button
-                className="btn btn-primary btn-full"
-                onClick={runSimulation}
-                disabled={loading}
-              >
-                {loading ? (
-                  <><span className="spinner"></span> Simulating...</>
-                ) : (
-                  <>🚀 Run Simulation</>
-                )}
-              </button>
-            </div>
-
-            {/* Current State */}
-            <div className="panel-section">
-              <h3 className="section-title">
-                <span className="section-icon">📊</span>
-                Current State
-              </h3>
-              <div className="metrics-list">
-                {twinState?.current_state && Object.entries(twinState.current_state).map(([key, value]) => {
-                  const delta = twinState.deltas?.[key];
-                  return (
-                    <div key={key} className="metric-row">
-                      <span className="metric-name">{key.replace(/_/g, " ")}</span>
-                      <div className="metric-values">
-                        <span className="metric-value">{formatValue(value, key)}</span>
-                        {delta && delta.delta_previous_pct !== 0 && (
-                          <span className={`metric-delta ${getDeltaClass(delta.delta_previous_pct)}`}>
-                            {delta.direction === "up" ? "↑" : delta.direction === "down" ? "↓" : "→"}
-                            {Math.abs(delta.delta_previous_pct).toFixed(1)}%
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* Center - Results */}
-          <div className="results-panel">
-            {simulationResult ? (
-              <>
-                {/* Strategic Priority */}
-                <div className={`priority-banner ${simulationResult.strategic_priority?.toLowerCase().replace(" ", "-")}`}>
-                  <span className="priority-label">Strategic Priority:</span>
-                  <span className="priority-value">{simulationResult.strategic_priority}</span>
-                </div>
-
-                {/* Health & Confidence */}
-                <div className="scores-row">
-                  <div className="score-card health">
-                    <div className="score-ring" style={{
-                      background: `conic-gradient(${getHealthColor(simulationResult.health_score)} ${simulationResult.health_score * 3.6}deg, rgba(255,255,255,0.1) 0deg)`
-                    }}>
-                      <div className="score-inner">
-                        <span className="score-value">{Math.round(simulationResult.health_score)}</span>
-                      </div>
-                    </div>
-                    <span className="score-label">Business Health</span>
-                  </div>
-
-                  <div className="score-card confidence">
-                    <div className="score-ring" style={{
-                      background: `conic-gradient(${COLORS.secondary} ${simulationResult.confidence * 3.6}deg, rgba(255,255,255,0.1) 0deg)`
-                    }}>
-                      <div className="score-inner">
-                        <span className="score-value">{Math.round(simulationResult.confidence)}</span>
-                      </div>
-                    </div>
-                    <span className="score-label">Confidence</span>
-                  </div>
-
-                  <div className="score-card rules">
-                    <div className="rules-count">{simulationResult.total_rules_triggered}</div>
-                    <span className="score-label">Rules Triggered</span>
-                  </div>
-                </div>
-
-                {/* Before/After Comparison */}
-                <div className="comparison-section">
-                  <h3 className="section-title">
-                    <span className="section-icon">📈</span>
-                    Impact Analysis
-                  </h3>
-                  <div className="comparison-grid">
-                    {simulationResult.comparison?.deltas &&
-                      Object.entries(simulationResult.comparison.deltas).slice(0, 6).map(([key, data]) => (
-                        <div key={key} className="comparison-card">
-                          <div className="comparison-metric">{key.replace(/_/g, " ")}</div>
-                          <div className="comparison-values">
-                            <span className="before">{formatValue(data.baseline, key)}</span>
-                            <span className="arrow">→</span>
-                            <span className="after">{formatValue(data.current, key)}</span>
-                          </div>
-                          <div className={`comparison-delta ${getDeltaClass(data.delta_baseline_pct)}`}>
-                            {data.delta_baseline_pct > 0 ? "+" : ""}{data.delta_baseline_pct.toFixed(1)}%
-                          </div>
-                        </div>
-                      ))
-                    }
-                  </div>
-                </div>
-
-                {/* Forecast Chart */}
-                {simulationResult.forecast && (
-                  <div className="forecast-section">
-                    <h3 className="section-title">
-                      <span className="section-icon">🔮</span>
-                      3-Month Forecast
-                    </h3>
-                    <div className="forecast-chart">
-                      <ResponsiveContainer width="100%" height={200}>
-                        <AreaChart data={getForecastData()}>
-                          <defs>
-                            <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor={COLORS.success} stopOpacity={0.3} />
-                              <stop offset="95%" stopColor={COLORS.success} stopOpacity={0} />
-                            </linearGradient>
-                            <linearGradient id="riskGrad" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor={COLORS.danger} stopOpacity={0.3} />
-                              <stop offset="95%" stopColor={COLORS.danger} stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <XAxis dataKey="month" tick={{ fill: "#888", fontSize: 11 }} axisLine={false} />
-                          <YAxis tick={{ fill: "#888", fontSize: 11 }} axisLine={false} />
-                          <Tooltip
-                            contentStyle={{
-                              background: "rgba(15,15,26,0.95)",
-                              border: "1px solid rgba(255,255,255,0.1)",
-                              borderRadius: "8px"
-                            }}
-                          />
-                          <Area type="monotone" dataKey="revenue" stroke={COLORS.success} fill="url(#revenueGrad)" name="Revenue (K)" />
-                          <Area type="monotone" dataKey="risk" stroke={COLORS.danger} fill="url(#riskGrad)" name="Risk" />
-                          <Line type="monotone" dataKey="sentiment" stroke={COLORS.secondary} name="Sentiment" strokeWidth={2} dot={false} />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                    {simulationResult.forecast.summary && (
-                      <div className={`forecast-summary ${simulationResult.forecast.summary.outlook}`}>
-                        <strong>Outlook: {simulationResult.forecast.summary.outlook.toUpperCase()}</strong>
-                        <p>{simulationResult.forecast.summary.description}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Recommendations */}
-                {simulationResult.recommendations?.length > 0 && (
-                  <div className="recommendations-section">
-                    <h3 className="section-title">
-                      <span className="section-icon">💡</span>
-                      Recommendations
-                    </h3>
-                    <ul className="recommendations-list">
-                      {simulationResult.recommendations.map((rec, i) => (
-                        <li key={i}>{rec}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Warnings */}
-                {simulationResult.warnings?.length > 0 && (
-                  <div className="warnings-section">
-                    <h3 className="section-title">
-                      <span className="section-icon">⚠️</span>
-                      Warnings
-                    </h3>
-                    <ul className="warnings-list">
-                      {simulationResult.warnings.map((warn, i) => (
-                        <li key={i}>{warn}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Tradeoffs */}
-                {simulationResult.tradeoffs?.length > 0 && (
-                  <div className="tradeoffs-section">
-                    <h3 className="section-title">
-                      <span className="section-icon">⚖️</span>
-                      Tradeoffs
-                    </h3>
-                    <ul className="tradeoffs-list">
-                      {simulationResult.tradeoffs.map((trade, i) => (
-                        <li key={i}>{trade}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="empty-results">
-                <div className="empty-icon">🎯</div>
-                <h3>Ready to Simulate</h3>
-                <p>Adjust the parameters on the left and click "Run Simulation" to see how changes propagate through your business.</p>
+  // Tab content rendering
+  const renderDashboardTab = () => (
+    <>
+      {/* KPI Cards Row */}
+      <div className="kpi-row">
+        <div className="kpi-card">
+          <div className="kpi-icon">💰</div>
+          <div className="kpi-content">
+            <div className="kpi-label">Revenue</div>
+            <div className="kpi-value">{formatValue(twinState?.current_state?.revenue, "revenue")}</div>
+            {simulationResult?.impact_analysis?.revenue && (
+              <div className={`kpi-delta ${getDeltaClass(simulationResult.impact_analysis.revenue.delta)}`}>
+                {simulationResult.impact_analysis.revenue.delta > 0 ? "+" : ""}
+                {simulationResult.impact_analysis.revenue.delta?.toFixed(1)}%
               </div>
             )}
           </div>
+        </div>
 
-          {/* Right Panel - Agent Transparency */}
-          <div className="transparency-panel">
-            <h3 className="section-title">
-              <span className="section-icon">🤖</span>
-              Agent Activity
-            </h3>
+        <div className="kpi-card">
+          <div className="kpi-icon">👥</div>
+          <div className="kpi-content">
+            <div className="kpi-label">Customers</div>
+            <div className="kpi-value">{formatValue(twinState?.current_state?.customers, "customers")}</div>
+          </div>
+        </div>
 
-            {simulationResult?.agent_outputs ? (
-              <div className="agents-list">
-                {simulationResult.agent_outputs.map((agent, i) => (
-                  <div key={i} className="agent-card">
-                    <div className="agent-header">
-                      <span className="agent-name">{agent.agent}</span>
-                      <span className="agent-confidence">{agent.confidence}%</span>
-                    </div>
+        <div className="kpi-card">
+          <div className="kpi-icon">💬</div>
+          <div className="kpi-content">
+            <div className="kpi-label">Sentiment</div>
+            <div className="kpi-value">{formatValue(twinState?.current_state?.sentiment, "sentiment")}</div>
+          </div>
+        </div>
 
-                    {agent.rules_triggered?.length > 0 && (
-                      <div className="agent-rules">
-                        {agent.rules_triggered.slice(0, 3).map((rule, j) => (
-                          <div key={j} className="rule-item">{rule}</div>
-                        ))}
-                      </div>
-                    )}
+        <div className="kpi-card">
+          <div className="kpi-icon">⚠️</div>
+          <div className="kpi-content">
+            <div className="kpi-label">Risk Score</div>
+            <div className="kpi-value">{formatValue(twinState?.current_state?.risk_score, "risk_score")}</div>
+          </div>
+        </div>
+      </div>
 
-                    {agent.warnings?.length > 0 && (
-                      <div className="agent-warnings">
-                        {agent.warnings.map((warn, j) => (
-                          <div key={j} className="warning-item">⚠️ {warn}</div>
-                        ))}
-                      </div>
-                    )}
+      {/* Main Content Grid */}
+      <div className="dashboard-grid">
+        {/* Simulation Panel */}
+        <div className="panel simulation-panel">
+          <h3>🎮 What-If Simulation</h3>
+          <div className="slider-group">
+            <label>
+              Marketing Spend
+              <span className={adjustments.marketing_spend >= 0 ? "value-positive" : "value-negative"}>
+                {adjustments.marketing_spend >= 0 ? "+" : ""}{adjustments.marketing_spend}%
+              </span>
+            </label>
+            <input
+              type="range"
+              min="-50"
+              max="50"
+              value={adjustments.marketing_spend}
+              onChange={(e) => setAdjustments({ ...adjustments, marketing_spend: parseInt(e.target.value) })}
+            />
+          </div>
+
+          <div className="slider-group">
+            <label>
+              Cost Change
+              <span className={adjustments.costs <= 0 ? "value-positive" : "value-negative"}>
+                {adjustments.costs >= 0 ? "+" : ""}{adjustments.costs}%
+              </span>
+            </label>
+            <input
+              type="range"
+              min="-50"
+              max="50"
+              value={adjustments.costs}
+              onChange={(e) => setAdjustments({ ...adjustments, costs: parseInt(e.target.value) })}
+            />
+          </div>
+
+          <div className="slider-group">
+            <label>
+              Delivery Delay
+              <span className={adjustments.delivery_delay <= 0 ? "value-positive" : "value-negative"}>
+                {adjustments.delivery_delay >= 0 ? "+" : ""}{adjustments.delivery_delay} days
+              </span>
+            </label>
+            <input
+              type="range"
+              min="-5"
+              max="10"
+              value={adjustments.delivery_delay}
+              onChange={(e) => setAdjustments({ ...adjustments, delivery_delay: parseInt(e.target.value) })}
+            />
+          </div>
+
+          <div className="checkbox-group">
+            <label>
+              <input
+                type="checkbox"
+                checked={adjustments.market_shock}
+                onChange={(e) => setAdjustments({ ...adjustments, market_shock: e.target.checked })}
+              />
+              Market Shock 💥
+            </label>
+          </div>
+
+          <button className="btn-primary" onClick={runSimulation} disabled={loading}>
+            {loading ? "Simulating..." : "▶ Run Simulation"}
+          </button>
+        </div>
+
+        {/* Impact Analysis */}
+        {simulationResult && (
+          <div className="panel impact-panel">
+            <h3>📊 Impact Analysis</h3>
+            <div className="impact-grid">
+              {Object.entries(simulationResult.impact_analysis || {}).map(([metric, data]) => (
+                <div key={metric} className="impact-item">
+                  <div className="impact-metric">{metric.toUpperCase()}</div>
+                  <div className="impact-values">
+                    <span className="impact-before">{formatValue(data.before, metric)}</span>
+                    <span className="impact-arrow">→</span>
+                    <span className="impact-after">{formatValue(data.after, metric)}</span>
+                  </div>
+                  <div className={`impact-delta ${getDeltaClass(data.delta)}`}>
+                    {data.delta > 0 ? "+" : ""}{data.delta?.toFixed(1)}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Agent Activity */}
+        <div className="panel agents-panel">
+          <h3>🤖 Agent Activity</h3>
+          <div className="agent-list">
+            {simulationResult?.agent_outputs?.map((agent, idx) => (
+              <div key={idx} className="agent-card">
+                <div className="agent-header">
+                  <span className="agent-name">{agent.agent}</span>
+                  <span className="agent-confidence" style={{ color: getHealthColor(agent.confidence * 100) }}>
+                    {(agent.confidence * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <p className="agent-message">{agent.analysis || agent.recommendation}</p>
+              </div>
+            )) || (
+                <p className="no-data">Run a simulation to see agent recommendations</p>
+              )}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const renderForecastTab = () => (
+    <div className="forecast-container">
+      <div className="panel forecast-panel">
+        <h3>📈 Revenue Forecast (Multi-Horizon)</h3>
+        {multiHorizonForecast ? (
+          <>
+            <div className="forecast-horizons">
+              {Object.entries(multiHorizonForecast.horizons || {}).map(([days, data]) => (
+                <div key={days} className="horizon-card">
+                  <div className="horizon-days">{days} Days</div>
+                  <div className="horizon-value">${Number(data.predicted_revenue).toLocaleString()}</div>
+                  <div className="horizon-range">
+                    ${Number(data.confidence_interval[0]).toLocaleString()} - ${Number(data.confidence_interval[1]).toLocaleString()}
+                  </div>
+                  <div className={`horizon-trend trend-${data.trend}`}>
+                    {data.trend === "up" ? "📈" : data.trend === "down" ? "📉" : "➡️"} {data.trend}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="forecast-chart">
+              <ResponsiveContainer width="100%" height={300}>
+                <ComposedChart data={Object.entries(multiHorizonForecast.horizons || {}).map(([days, data]) => ({
+                  days: `${days}d`,
+                  revenue: data.predicted_revenue,
+                  low: data.confidence_interval[0],
+                  high: data.confidence_interval[1],
+                }))}>
+                  <XAxis dataKey="days" stroke="#94a3b8" />
+                  <YAxis stroke="#94a3b8" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v) => `$${Number(v).toLocaleString()}`} />
+                  <Area type="monotone" dataKey="low" fill={COLORS.primary} fillOpacity={0.1} stroke="none" />
+                  <Area type="monotone" dataKey="high" fill={COLORS.primary} fillOpacity={0.1} stroke="none" />
+                  <Line type="monotone" dataKey="revenue" stroke={COLORS.primary} strokeWidth={3} dot={{ fill: COLORS.primary }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </>
+        ) : (
+          <p className="no-data">Upload data to see forecasts</p>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderChurnTab = () => (
+    <div className="churn-container">
+      <div className="panel churn-panel">
+        <h3>🚨 Churn Risk Analysis</h3>
+        {churnData ? (
+          <>
+            <div className="churn-summary">
+              <div className="churn-gauge">
+                <div
+                  className="gauge-fill"
+                  style={{
+                    width: `${churnData.churn_prediction.probability * 100}%`,
+                    backgroundColor: getRiskColor(churnData.churn_prediction.risk_level)
+                  }}
+                />
+                <div className="gauge-label">
+                  {(churnData.churn_prediction.probability * 100).toFixed(1)}% Churn Risk
+                </div>
+              </div>
+              <div className={`risk-badge risk-${churnData.churn_prediction.risk_level}`}>
+                {churnData.churn_prediction.risk_level.toUpperCase()}
+              </div>
+            </div>
+
+            <div className="churn-factors">
+              <h4>Contributing Factors</h4>
+              {Object.entries(churnData.contributing_factors || {}).map(([factor, value]) => (
+                <div key={factor} className="factor-item">
+                  <span className="factor-name">{factor.replace(/_/g, " ")}</span>
+                  <div className="factor-bar">
+                    <div
+                      className="factor-fill"
+                      style={{
+                        width: `${Math.abs(value) * 100}%`,
+                        backgroundColor: value > 0 ? COLORS.danger : COLORS.success
+                      }}
+                    />
+                  </div>
+                  <span className="factor-value">{(value * 100).toFixed(1)}%</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="churn-recommendations">
+              <h4>💡 Retention Recommendations</h4>
+              <ul>
+                {churnData.recommendations?.map((rec, idx) => (
+                  <li key={idx}>{rec}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="revenue-at-risk">
+              <span className="rar-label">Revenue at Risk:</span>
+              <span className="rar-value">${Number(churnData.revenue_at_risk).toLocaleString()}</span>
+            </div>
+          </>
+        ) : (
+          <p className="no-data">Upload data to see churn predictions</p>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderMonitoringTab = () => (
+    <div className="monitoring-container">
+      <div className="panel monitoring-panel">
+        <h3>🔍 Model & Data Monitoring</h3>
+        {driftData ? (
+          <>
+            <div className="monitoring-summary">
+              <div className="stability-gauge">
+                <div className="gauge-circle" style={{ borderColor: getHealthColor((1 - driftData.drift_report.overall_score) * 100) }}>
+                  <span className="gauge-value">{((1 - driftData.drift_report.overall_score) * 100).toFixed(0)}%</span>
+                  <span className="gauge-label">Stable</span>
+                </div>
+              </div>
+              <div className="monitoring-stats">
+                <div className="stat-item">
+                  <span className="stat-label">Severity</span>
+                  <span className={`stat-value severity-${driftData.drift_report.severity}`}>
+                    {driftData.drift_report.severity.toUpperCase()}
+                  </span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Performance Trend</span>
+                  <span className="stat-value">{driftData.drift_report.performance_trend}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Retraining Needed</span>
+                  <span className={`stat-value ${driftData.drift_report.requires_retraining ? "alert" : ""}`}>
+                    {driftData.drift_report.requires_retraining ? "⚠️ YES" : "✅ NO"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {driftData.alerts?.length > 0 && (
+              <div className="drift-alerts">
+                <h4>⚠️ Active Alerts</h4>
+                {driftData.alerts.map((alert, idx) => (
+                  <div key={idx} className={`alert-item alert-${alert.severity}`}>
+                    <span className="alert-type">{alert.type}</span>
+                    <span className="alert-message">{alert.message}</span>
+                    <span className="alert-action">{alert.action}</span>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="agents-placeholder">
-                <p>Run a simulation to see agent activity</p>
-              </div>
             )}
+
+            <div className="monitoring-recommendations">
+              <h4>📋 Recommendations</h4>
+              <ul>
+                {driftData.recommendations?.map((rec, idx) => (
+                  <li key={idx}>{rec}</li>
+                ))}
+              </ul>
+            </div>
+          </>
+        ) : (
+          <p className="no-data">Upload data to see monitoring status</p>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderUploadPanel = () => (
+    <div className={`upload-panel ${showUploadPanel ? "" : "collapsed"}`}>
+      <div className="upload-header" onClick={() => setShowUploadPanel(!showUploadPanel)}>
+        <h3>📁 Data Sources</h3>
+        <span className="toggle-icon">{showUploadPanel ? "▼" : "▶"}</span>
+      </div>
+      {showUploadPanel && (
+        <div className="category-grid">
+          {Object.entries(categories).map(([key, cat]) => (
+            <div key={key} className={`category-card ${getCategoryStatus(key) ? "has-data" : ""}`}>
+              <div className="category-icon">{CATEGORY_ICONS[key] || "📊"}</div>
+              <div className="category-name">{cat.name}</div>
+              <div className="category-desc">{cat.description}</div>
+              <div className="category-actions">
+                <input
+                  type="file"
+                  ref={(el) => (fileInputRefs.current[key] = el)}
+                  onChange={(e) => handleFileUpload(e, key)}
+                  accept=".csv,.txt,.docx"
+                  style={{ display: "none" }}
+                />
+                <button
+                  className="btn-upload"
+                  onClick={() => fileInputRefs.current[key]?.click()}
+                  disabled={uploadingCategory === key}
+                >
+                  {uploadingCategory === key ? "Uploading..." : getCategoryStatus(key) ? "Replace" : "Upload"}
+                </button>
+                {getCategoryStatus(key) && (
+                  <button className="btn-clear" onClick={() => clearCategory(key)}>✕</button>
+                )}
+              </div>
+              {getCategoryStatus(key) && <div className="status-dot active"></div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="app">
+      {/* Header */}
+      <header className="header">
+        <div className="logo">
+          <span className="logo-icon">🔮</span>
+          <span className="logo-text">SAGE-Twin</span>
+          <span className="version">v3.0</span>
+        </div>
+
+        {/* Health Score */}
+        <div className="health-display">
+          <div className="health-circle" style={{ borderColor: getHealthColor(healthScore) }}>
+            <span className="health-value">{healthScore.toFixed(0)}</span>
           </div>
+          <span className="health-label">Health</span>
+        </div>
+
+        {/* Navigation Tabs */}
+        <nav className="nav-tabs">
+          <button className={`tab ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>
+            📊 Dashboard
+          </button>
+          <button className={`tab ${activeTab === "forecasts" ? "active" : ""}`} onClick={() => setActiveTab("forecasts")} disabled={!mlEnabled}>
+            📈 Forecasts
+          </button>
+          <button className={`tab ${activeTab === "churn" ? "active" : ""}`} onClick={() => setActiveTab("churn")} disabled={!mlEnabled}>
+            🚨 Churn
+          </button>
+          <button className={`tab ${activeTab === "monitoring" ? "active" : ""}`} onClick={() => setActiveTab("monitoring")} disabled={!mlEnabled}>
+            🔍 Monitoring
+          </button>
+        </nav>
+
+        {/* Actions */}
+        <div className="header-actions">
+          <button className="btn-secondary" onClick={() => setShowUploadPanel(!showUploadPanel)}>
+            📁 Data Sources
+          </button>
+          <button className="btn-reset" onClick={resetState} disabled={loading}>
+            🔄 Reset
+          </button>
+        </div>
+      </header>
+
+      {/* Upload Panel */}
+      {renderUploadPanel()}
+
+      {/* Main Content */}
+      <main className="main-content">
+        {!initialized ? (
+          <div className="empty-state">
+            <div className="empty-icon">📁</div>
+            <h2>Upload Your Business Data</h2>
+            <p>Start by uploading data files to each category above to initialize your Digital Twin.</p>
+          </div>
+        ) : (
+          <>
+            {activeTab === "dashboard" && renderDashboardTab()}
+            {activeTab === "forecasts" && renderForecastTab()}
+            {activeTab === "churn" && renderChurnTab()}
+            {activeTab === "monitoring" && renderMonitoringTab()}
+          </>
+        )}
+      </main>
+
+      {/* ML Status Badge */}
+      {mlEnabled && (
+        <div className="ml-badge">
+          <span className="ml-dot"></span>
+          ML Enabled
         </div>
       )}
     </div>
