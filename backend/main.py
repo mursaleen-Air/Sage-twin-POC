@@ -22,10 +22,17 @@ from multi_agents import multi_agent_engine
 from forecast import generate_forecast
 from data_sources import data_source_manager, DATA_CATEGORIES
 
+# Import ML API router (Phase 1-4 capabilities)
+try:
+    from ml_api import router as ml_router
+    ML_ENABLED = True
+except ImportError:
+    ML_ENABLED = False
+
 app = FastAPI(
     title="SAGE-Twin Digital Twin API",
-    description="Multi-Agent Business Simulation System with Multi-Source Data",
-    version="2.1"
+    description="Multi-Agent Business Simulation System with ML, Forecasting & Continuous Learning",
+    version="3.0"
 )
 
 app.add_middleware(
@@ -35,6 +42,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include ML routes if available
+if ML_ENABLED:
+    app.include_router(ml_router)
 
 
 # ============================================
@@ -62,11 +73,19 @@ class ImpactRequest(BaseModel):
 def root():
     return {
         "name": "SAGE-Twin Digital Twin",
-        "version": "2.1",
+        "version": "3.0",
         "status": "running",
         "initialized": business_state.initialized,
         "health_score": business_state.health_score if business_state.initialized else None,
-        "data_sources": data_source_manager.get_combined_state()["total_files"]
+        "data_sources": data_source_manager.get_combined_state()["total_files"],
+        "ml_enabled": ML_ENABLED,
+        "capabilities": {
+            "simulation": True,
+            "forecasting": ML_ENABLED,
+            "churn_prediction": ML_ENABLED,
+            "drift_monitoring": ML_ENABLED,
+            "multi_agent": True
+        }
     }
 
 
